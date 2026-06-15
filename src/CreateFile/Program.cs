@@ -8,6 +8,7 @@ using PdfSharpCore.Pdf;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using System.Text.RegularExpressions;
 
 namespace ImageStitchAndPdf
 {
@@ -16,7 +17,7 @@ namespace ImageStitchAndPdf
         // Page dimensions (A4 at ~300 DPI by default — adjust as needed)
         const int PageWidth = 2480;
         const int PageHeight = 3508;
-        const int Margin = 50;
+        const int Margin = 150;
         const int VerticalSpacing = 30;
 
         static void Main(string[] args)
@@ -29,12 +30,11 @@ namespace ImageStitchAndPdf
 
             string inputFolder =  args[0];
             string outputPdf = args[1];
-            bool horizontal = args.Contains("--horizontal");
 
             var imageFiles = Directory.GetFiles(inputFolder)
                 .Where(f => new[] { ".png", ".jpg", ".jpeg", ".bmp" }
                     .Contains(Path.GetExtension(f).ToLowerInvariant()))
-                .OrderBy(f => f)
+                .OrderBy(f => int.Parse(Regex.Matches(f, "[0-9]+(\\.[0-9]+)?")[0].Value)) // file name = image_1.png, image_2.png, etc.
                 .ToList();
 
             if (imageFiles.Count == 0)
@@ -45,52 +45,7 @@ namespace ImageStitchAndPdf
 
             Console.WriteLine($"Found {imageFiles.Count} images.");
 
-            if (horizontal)
-            {
-                StitchHorizontally(imageFiles, outputPdf);
-            }
-            else
-            {
-                StitchVerticallyAndPaginate(imageFiles, outputPdf);
-            }
-        }
-
-        /// <summary>
-        /// Stitches all images side-by-side into a single wide image, then exports as a single-page PDF.
-        /// </summary>
-        static void StitchHorizontally(List<string> imageFiles, string outputPdf)
-        {
-            const float scale = 0.5f;
-
-            var loaded = imageFiles.Select(f =>
-            {
-                var img = SixLabors.ImageSharp.Image.Load<Rgba32>(f);
-                int newWidth = (int)(img.Width * scale);
-                int newHeight = (int)(img.Height * scale);
-                img.Mutate(ctx => ctx.Resize(newWidth, newHeight));
-                return img;
-            }).ToList();
-
-            int totalWidth = loaded.Sum(i => i.Width);
-            int maxHeight = loaded.Max(i => i.Height);
-
-            using var combined = new Image<Rgba32>(totalWidth, maxHeight, SixLabors.ImageSharp.Color.White);
-
-            int xOffset = 0;
-            foreach (var img in loaded)
-            {
-                combined.Mutate(ctx => ctx.DrawImage(img, new SixLabors.ImageSharp.Point(xOffset, 0), 1f));
-                xOffset += img.Width;
-                img.Dispose();
-            }
-
-            string tempPng = Path.Combine(Path.GetTempPath(), $"stitched_{Guid.NewGuid()}.png");
-            combined.Save(tempPng);
-
-            CreatePdfFromImages(new List<string> { tempPng }, outputPdf, fitToPage: true);
-
-            File.Delete(tempPng);
-            Console.WriteLine($"Saved horizontally-stitched PDF to {outputPdf}");
+            StitchVerticallyAndPaginate(imageFiles, outputPdf);
         }
 
         /// <summary>
@@ -103,28 +58,47 @@ namespace ImageStitchAndPdf
             var pages = new List<Image<Rgba32>>();
             var current = NewPage();
             int y = Margin;
+            int x = Margin;
+            int totalWidth = 0;
+            int totalHeight = 0;
+
+            // This is to scale down images if they are too large for the page. Adjust as needed.
+            const float scaleFactor = 1f;
 
             foreach (var file in imageFiles)
             {
                 using var img = SixLabors.ImageSharp.Image.Load<Rgba32>(file);
 
                 // Scale image to fit page width if it's too wide
-                int targetWidth = Math.Min(img.Width, PageWidth - 2 * Margin);
-                double scale = (double)targetWidth / img.Width;
-                int targetHeight = (int)(img.Height * scale);
 
-                if (y + targetHeight + Margin > PageHeight)
+                int newWidth = (int)(img.Width * scaleFactor);
+                int newHeight = (int)(img.Height * scaleFactor);
+
+                if (totalWidth + newWidth > PageWidth)
+                {
+                    x = Margin;
+                    y += newHeight + VerticalSpacing;
+                    totalHeight += newHeight + VerticalSpacing;
+                    totalWidth = 0;
+                }
+
+                if (totalHeight + newHeight > PageHeight)
                 {
                     pages.Add(current);
                     current = NewPage();
+                    x = Margin;
                     y = Margin;
+                    totalWidth = 0;
+                    totalHeight = 0;
                 }
 
-                using var resized = img.Clone(ctx => ctx.Resize(targetWidth, targetHeight));
-                current.Mutate(ctx => ctx.DrawImage(resized, new SixLabors.ImageSharp.Point(Margin, y), 1f));
+                totalWidth += newWidth + VerticalSpacing;
 
-                y += targetHeight + VerticalSpacing;
-                Console.WriteLine($"Placed {Path.GetFileName(file)} at y={y - targetHeight - VerticalSpacing}, size {targetWidth}x{targetHeight}");
+                using var resized = img.Clone(ctx => ctx.Resize(newWidth, newHeight));
+                current.Mutate(ctx => ctx.DrawImage(resized, new SixLabors.ImageSharp.Point(x, y), 1f));
+
+                x += newWidth;
+                Console.WriteLine($"Placed {Path.GetFileName(file)} at x = {x}, y={y}, size {newWidth}x{newHeight}");
             }
 
             pages.Add(current);
@@ -139,7 +113,7 @@ namespace ImageStitchAndPdf
                 pages[i].Dispose();
             }
 
-            CreatePdfFromImages(tempFiles, outputPdf, fitToPage: false);
+            CreatePdfFromImages(tempFiles, outputPdf, fitToPage: false, "All of me - Advanced");
 
             foreach (var f in tempFiles)
                 File.Delete(f);
@@ -162,6 +136,8 @@ namespace ImageStitchAndPdf
             using var document = new PdfDocument();
 
             var titleFont = new XFont("Arial", 24, XFontStyle.Bold);
+
+            bool titleAdded = false;
 
             foreach (var path in imagePaths)
             {
@@ -187,7 +163,7 @@ namespace ImageStitchAndPdf
                 using var xImage = XImage.FromFile(path);
 
                 double titleHeight = 0;
-                if (!string.IsNullOrEmpty(title))
+                if (!string.IsNullOrEmpty(title) && titleAdded == false)
                 {
                     var titleSize = gfx.MeasureString(title, titleFont);
                     titleHeight = titleSize.Height + 20; // padding below title
@@ -198,6 +174,8 @@ namespace ImageStitchAndPdf
                         XBrushes.Black,
                         new XRect(0, 10, page.Width, titleSize.Height),
                         XStringFormats.TopCenter);
+
+                    titleAdded = true;
                 }
 
                 // Available area for the image, shifted down by titleHeight
