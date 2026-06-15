@@ -10,14 +10,8 @@ using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using System.Text.RegularExpressions;
 
-namespace ImageStitchAndPdf
+namespace CreateFile
 {
-    public class OrderedFile
-    {
-        public string FileName { get; set; }
-        public int Order { get; set; }
-    }
-
     class Program
     {
         // Page dimensions (A4 at ~300 DPI by default — adjust as needed)
@@ -25,14 +19,16 @@ namespace ImageStitchAndPdf
         const int PageHeight = 3508;
         const int Margin = 100;
         const int VerticalSpacing = 80;
+        const float ScaleFactor = 1f;
 
         static void Main(string[] args)
         {
-            //if (args.Length < 3)
-            //{
-            //    Console.WriteLine("usage: imagestitchandpdf <inputfolder> <outputpdf> [--horizontal]");
-            //    return;
-            //}
+            if (args.Length < 3)
+            {
+                Console.WriteLine("usage: CreateFile <inputfolder> <outputpdf> <Title>");
+                Console.WriteLine("e.g.:  CreateFile C:\\5f8f9d732900015ab \"chasing-cars.pdf\" \"Chasing Cars by Snow Patrol\"");
+                return;
+            }
 
             string inputFolder = args[0];
             string outputPdf = args[1];
@@ -71,8 +67,6 @@ namespace ImageStitchAndPdf
             int totalHeight = 0;
 
             // This is to scale down images if they are too large for the page. Adjust as needed.
-            const float scaleFactor = 1f;
-
             foreach (var file in imageFiles)
             {
                 Console.WriteLine($"Processing {Path.GetFileName(file.FileName)}...");
@@ -80,8 +74,8 @@ namespace ImageStitchAndPdf
 
                 // Scale image to fit page width if it's too wide
 
-                int newWidth = (int)(img.Width * scaleFactor);
-                int newHeight = (int)(img.Height * scaleFactor);
+                int newWidth = (int)(img.Width * ScaleFactor);
+                int newHeight = (int)(img.Height * ScaleFactor);
 
                 if (totalWidth + newWidth > PageWidth)
                 {
@@ -140,7 +134,7 @@ namespace ImageStitchAndPdf
         /// If fitToPage is true, the image is scaled to fit a standard A4 page;
         /// otherwise the page size matches the image dimensions (assumed already page-sized).
         /// </summary>
-        static void CreatePdfFromImages(List<string> imagePaths, string outputPdf, bool fitToPage, string title = null)
+        static void CreatePdfFromImages(List<string> imagePaths, string outputPdf, bool fitToPage, string title)
         {
             using var document = new PdfDocument();
 
