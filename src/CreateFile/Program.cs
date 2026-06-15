@@ -12,30 +12,38 @@ using System.Text.RegularExpressions;
 
 namespace ImageStitchAndPdf
 {
+    public class OrderedFile
+    {
+        public string FileName { get; set; }
+        public int Order { get; set; }
+    }
+
     class Program
     {
         // Page dimensions (A4 at ~300 DPI by default — adjust as needed)
         const int PageWidth = 2480;
         const int PageHeight = 3508;
-        const int Margin = 150;
-        const int VerticalSpacing = 30;
+        const int Margin = 100;
+        const int VerticalSpacing = 80;
 
         static void Main(string[] args)
         {
-            if (args.Length < 2)
-            {
-                Console.WriteLine("usage: imagestitchandpdf <inputfolder> <outputpdf> [--horizontal]");
-                return;
-            }
+            //if (args.Length < 3)
+            //{
+            //    Console.WriteLine("usage: imagestitchandpdf <inputfolder> <outputpdf> [--horizontal]");
+            //    return;
+            //}
 
-            string inputFolder =  args[0];
+            string inputFolder = args[0];
             string outputPdf = args[1];
+            string title = args[2];
 
             var imageFiles = Directory.GetFiles(inputFolder)
                 .Where(f => new[] { ".png", ".jpg", ".jpeg", ".bmp" }
                     .Contains(Path.GetExtension(f).ToLowerInvariant()))
-                .OrderBy(f => int.Parse(Regex.Matches(f, "[0-9]+(\\.[0-9]+)?")[0].Value)) // file name = image_1.png, image_2.png, etc.
-                .ToList();
+                .Select(fs => new OrderedFile { FileName = fs, Order = Convert.ToInt32(Regex.Matches(fs, "image_(\\d+)\\.png$")[0].Groups[1].Value) })
+                .OrderBy(f => f.Order)
+                .ToList(); // file name = image_1.png, image_2.png, etc.
 
             if (imageFiles.Count == 0)
             {
@@ -45,7 +53,7 @@ namespace ImageStitchAndPdf
 
             Console.WriteLine($"Found {imageFiles.Count} images.");
 
-            StitchVerticallyAndPaginate(imageFiles, outputPdf);
+            StitchVerticallyAndPaginate(imageFiles, outputPdf, title);
         }
 
         /// <summary>
@@ -53,7 +61,7 @@ namespace ImageStitchAndPdf
         /// when the current one would overflow. Each page is rendered as a temp PNG,
         /// then all pages are combined into a single PDF.
         /// </summary>
-        static void StitchVerticallyAndPaginate(List<string> imageFiles, string outputPdf)
+        static void StitchVerticallyAndPaginate(List<OrderedFile> imageFiles, string outputPdf, string title)
         {
             var pages = new List<Image<Rgba32>>();
             var current = NewPage();
@@ -67,7 +75,8 @@ namespace ImageStitchAndPdf
 
             foreach (var file in imageFiles)
             {
-                using var img = SixLabors.ImageSharp.Image.Load<Rgba32>(file);
+                Console.WriteLine($"Processing {Path.GetFileName(file.FileName)}...");
+                using var img = SixLabors.ImageSharp.Image.Load<Rgba32>(file.FileName);
 
                 // Scale image to fit page width if it's too wide
 
@@ -82,7 +91,7 @@ namespace ImageStitchAndPdf
                     totalWidth = 0;
                 }
 
-                if (totalHeight + newHeight > PageHeight)
+                if (totalHeight + newHeight + VerticalSpacing > PageHeight)
                 {
                     pages.Add(current);
                     current = NewPage();
@@ -98,7 +107,7 @@ namespace ImageStitchAndPdf
                 current.Mutate(ctx => ctx.DrawImage(resized, new SixLabors.ImageSharp.Point(x, y), 1f));
 
                 x += newWidth;
-                Console.WriteLine($"Placed {Path.GetFileName(file)} at x = {x}, y={y}, size {newWidth}x{newHeight}");
+                Console.WriteLine($"Placed {Path.GetFileName(file.FileName)} at x = {x}, y={y}, size {newWidth}x{newHeight}");
             }
 
             pages.Add(current);
@@ -113,7 +122,7 @@ namespace ImageStitchAndPdf
                 pages[i].Dispose();
             }
 
-            CreatePdfFromImages(tempFiles, outputPdf, fitToPage: false, "All of me - Advanced");
+            CreatePdfFromImages(tempFiles, outputPdf, fitToPage: false, title);
 
             foreach (var f in tempFiles)
                 File.Delete(f);
@@ -135,7 +144,7 @@ namespace ImageStitchAndPdf
         {
             using var document = new PdfDocument();
 
-            var titleFont = new XFont("Arial", 24, XFontStyle.Bold);
+            var titleFont = new XFont("Arial", 15, XFontStyle.Bold);
 
             bool titleAdded = false;
 
